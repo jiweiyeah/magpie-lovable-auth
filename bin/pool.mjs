@@ -24,7 +24,13 @@ import { classify, ledgerKeys, mask, parseKeys, readSource } from "../src/import
 const PROVIDER = "lovable"
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const POOL_FILE = process.env.LOVABLE_POOL_FILE ?? path.join(HERE, "..", ".lovable-pool.txt")
-const AUTH_PATH = process.env.MAGPIE_AUTH_PATH ?? path.join(os.homedir(), ".config", "magpie", "plugin-auth.json")
+// The host keeps plugin-auth.json under XDG_CONFIG_HOME when it is set
+// (a container sets it to /config), so the file is looked for where magpie
+// actually keeps it rather than under $HOME, which a container leaves as
+// /config/home. MAGPIE_AUTH_PATH names it outright.
+const AUTH_PATH =
+  process.env.MAGPIE_AUTH_PATH ??
+  path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "magpie", "plugin-auth.json")
 const LOCK_STALE_MS = 10_000
 
 function lock(file) {
