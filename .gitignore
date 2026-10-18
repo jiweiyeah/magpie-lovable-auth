@@ -1,0 +1,4 @@
+node_modules/
+.lovable-book.json
+*.log
+.DS_Store

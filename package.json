@@ -1,0 +1,27 @@
+{
+  "name": "magpie-lovable-auth",
+  "version": "0.1.0",
+  "description": "Lovable's AI Gateway as a magpie provider: key pooling, beta stripping, and per-key health",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'"
+  },
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "lovable",
+    "anthropic",
+    "ai-gateway"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
