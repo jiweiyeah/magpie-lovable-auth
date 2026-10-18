@@ -145,11 +145,16 @@ function cmdSlots(argv) {
   const unlock = lock(AUTH_PATH)
   try {
     const all = readAuth()
-    // every account of this provider that carries its own key is one the
-    // slots replace; leaving one behind means magpie routes some turns to
-    // a key the pool never sees
+    // Every account of this provider goes, both kinds:
+    //
+    //   * one carrying its own key is what the slots replace; leaving it
+    //     behind means magpie routes some turns to a key the pool never
+    //     sees.
+    //   * a slot past `n` is one this command is meant to remove. Writing
+    //     the first n and leaving the rest is how `slots 12` followed by
+    //     `slots 8` ended up with twelve.
     for (const k of Object.keys(all)) {
-      if ((k === PROVIDER || k.startsWith(`${PROVIDER}#`)) && all[k]?.pool !== true) delete all[k]
+      if (k === PROVIDER || k.startsWith(`${PROVIDER}#`)) delete all[k]
     }
     for (let i = 0; i < n; i++) all[slotName(i)] = { type: "api", key: "", pool: true }
     writeDurable(AUTH_PATH, JSON.stringify(all, null, 2) + "\n")
