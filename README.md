@@ -53,8 +53,23 @@ lands.
 
 `supported_surfaces` is what makes this work: it names the protocol. 23 of
 the 59 serve a chat surface — `messages`, `chat-completions` or `responses`.
+
 The other 36 are speech, transcription, embeddings, videos and image
-generation, and are left out rather than listed and failing.
+generation. They are listed too, with their surface in the name:
+
+```
+lovable/google/gemini-2.5-flash-tts  Gemini 2.5 Flash TTS — text-to-speech only
+lovable/google/veo-3.1               Veo 3.1 — video only
+```
+
+Dropping them made the account look smaller than it is; listing them as
+ordinary models would offer an agent one that cannot answer. So they keep
+their place and lose their tool calling — which is what an agent picks a
+model for — and their name says why.
+
+**They are not marked `deprecated`.** The host filters deprecated models out
+of the provider list entirely, so marking one hides it rather than labelling
+it — the opposite of the intent.
 
 `pricing` is USD per token, per tier; the first tier is what a request costs,
 and it maps straight onto magpie's `cost`.
@@ -124,6 +139,46 @@ one Lovable account share one credit balance and one rate bucket — a second
 key from the same account adds no capacity. A pool only grows by adding
 *accounts*.
 
+### A batch at once
+
+`magpie plugin login` is one prompt per key. For a file:
+
+```bash
+node bin/import-keys.mjs keys.txt          # one key per line
+node bin/import-keys.mjs sk_a…,sk_b…       # or a comma list
+cat keys.txt | node bin/import-keys.mjs -  # or stdin
+node bin/import-keys.mjs keys.txt --dry-run  # say what it would do
+```
+
+Two mistakes a batch makes silently, both caught:
+
+**The same key twice.** magpie would make it two accounts, so a turn routed
+to the second is a turn spent on a key already in the pool. Compared on the
+whole key — two keys of one account share a prefix and differ at the end —
+and against every key already in `plugin-auth.json`, not just this
+provider's.
+
+**A truncated key.** A copy that lost its tail is still all base64, so an
+alphabet check passes it and the key authenticates as nothing: 401 on every
+turn it is given. Lovable's keys are 267 characters, and the length is what
+catches it.
+
+```
+add    sk_J088…Gw==  as lovable#1ui6pc
+skip   sk_AAA…AAAA  already in the pool
+refuse sk_ABC…sW/z  truncated (200 of 267 characters)
+refuse …            not a key (no sk_ prefix)
+
+1 added · 1 duplicate · 2 invalid
+```
+
+It writes under the host's own lock and through the same durable write, so a
+magpie that is running when this runs does not write its own newer changes
+away with what it read before. A report shows `sk_J088…Gw==`: enough to tell
+two keys apart, not enough to use one.
+
+Reopen magpie afterwards so the new accounts are read.
+
 ## Files
 
 ```
@@ -131,6 +186,8 @@ src/index.mjs     the plugin: loader, fetch, usage, config, models
 src/headers.mjs   the beta filter and the body scrub
 src/models.mjs    the catalog: reading it, and the fallback
 src/keys.mjs      the book: what each key has done, and what that means
+src/import.mjs    a batch of keys: parsing, dedupe, the length check
+bin/import-keys.mjs  the batch importer, under the host's own lock
 test/             the edges against fixtures, and the gateway itself
 ```
 

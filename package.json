@@ -8,10 +8,15 @@
     ".": "./src/index.mjs"
   },
   "files": [
-    "src"
+    "src",
+    "bin"
   ],
+  "bin": {
+    "magpie-lovable-import": "bin/import-keys.mjs"
+  },
   "scripts": {
-    "test": "node --test 'test/*.test.mjs'"
+    "test": "node --test 'test/*.test.mjs'",
+    "import": "node bin/import-keys.mjs"
   },
   "keywords": [
     "magpie",
