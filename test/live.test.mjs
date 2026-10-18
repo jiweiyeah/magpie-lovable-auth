@@ -8,7 +8,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { LovableAuth } from "../src/index.mjs"
+import LovableAuth from "../src/index.mjs"
 import { BASE, parseListing } from "../src/models.mjs"
 
 const KEY = process.env.LOVABLE_KEY

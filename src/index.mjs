@@ -28,7 +28,7 @@ import {
   runtimeModel,
 } from "./models.mjs"
 
-export const ID = "lovable"
+const ID = "lovable"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BOOK_FILE = path.join(HERE, "..", ".lovable-book.json")
@@ -69,13 +69,6 @@ async function readCatalog(signal) {
   return catalog.models.length ? catalog.models : normalizeFallback()
 }
 
-// modelIds is the catalog as a set, so a request can be checked against it
-// without a second read.
-async function modelIds(signal) {
-  const models = await readCatalog(signal)
-  return new Set(models.map((m) => m.id))
-}
-
 // expired makes an error magpie reads as "this account is done".
 //
 // The host looks for `signIn` on a thrown error (`host:2373`) and marks the
@@ -96,7 +89,7 @@ function keyIdOf(auth) {
   return idOf(auth?.key ?? "")
 }
 
-export const LovableAuth = async (_input, options = {}) => {
+const LovableAuth = async (_input, options = {}) => {
   const store = getBook(options)
 
   return {
@@ -113,7 +106,7 @@ export const LovableAuth = async (_input, options = {}) => {
         // routing to it.
         if (store.retired(id)) {
           return {
-            baseURL: BASE,
+            baseURL: `${BASE}/v1`,
             apiKey: "lovable",
             async fetch() {
               throw expired(
@@ -125,7 +118,11 @@ export const LovableAuth = async (_input, options = {}) => {
         }
 
         return {
-          baseURL: BASE,
+          // magpie appends the request's own path (`/messages`,
+          // `/chat/completions`) to this, so the version prefix belongs
+          // here — a baseURL without it sends `/messages` and the gateway
+          // answers 404.
+          baseURL: `${BASE}/v1`,
           apiKey: "lovable", // the fetch sets the real credential itself
           async fetch(init_, init = {}) {
             const url = typeof init_ === "string" ? init_ : init_ instanceof URL ? init_.href : init_.url
@@ -225,7 +222,11 @@ export const LovableAuth = async (_input, options = {}) => {
   }
 }
 
-// The pieces worth testing on their own, without a magpie around them.
-export const _internal = { readCatalog, modelIds, expired, keyIdOf }
-export { filterBetas, scrubBody, parseListing, normalizeFallback, Book, idOf, describe }
+// Nothing else is exported from this file on purpose.
+//
+// magpie's plugin host treats every exported function as a plugin entry
+// (`servers()` in the host walks `Object.values(mod)`), so a helper exported
+// beside the plugin is called as one — a class export is called without
+// `new` and the whole plugin fails to load. The pieces worth testing on
+// their own are exported from their own modules instead.
 export default LovableAuth
