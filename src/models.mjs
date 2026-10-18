@@ -112,10 +112,28 @@ function priceOf(pricing) {
   }
 }
 
+// SURFACE_LABEL names a surface the way a person reads it, for the models
+// this plugin cannot reach.
+const SURFACE_LABEL = {
+  speech: "text-to-speech",
+  transcription: "transcription",
+  embeddings: "embeddings",
+  videos: "video",
+  "image-generation": "image generation",
+  "image-edit": "image editing",
+  systemone: "System One",
+}
+
 // parseListing turns the gateway's reply into catalog entries.
 //
-// A model that serves no chat surface is left out: listing it would offer
-// an agent a model that answers on a path magpie cannot send to.
+// Every model the gateway lists is kept, including the ones magpie has no
+// chat shape for — those carry `unsupported` naming the surfaces they serve
+// instead, and are listed as deprecated so nothing routes to them while the
+// catalog still shows what the account can reach.
+//
+// Listing an unreachable model as active would offer an agent a model that
+// answers on a path magpie cannot send to; dropping it leaves the account's
+// catalog looking smaller than it is.
 export function parseListing(reply) {
   const data = Array.isArray(reply?.data) ? reply.data : []
   const out = []
@@ -124,15 +142,21 @@ export function parseListing(reply) {
     if (m.deprecated === true) continue
     const surfaces = Array.isArray(m.supported_surfaces) ? m.supported_surfaces : []
     const npm = npmOf(surfaces)
-    if (!npm) continue
     const input = Array.isArray(m.modalities?.input) ? m.modalities.input : ["text"]
+    const unsupported = npm
+      ? ""
+      : surfaces.map((s) => SURFACE_LABEL[s] ?? s).join(", ") || "an unknown surface"
     out.push({
       id: m.id,
       name: typeof m.name === "string" && m.name ? m.name : m.id,
       npm,
+      unsupported,
+      surfaces,
       context: Number.isFinite(m.context_window) ? m.context_window : 0,
       output: Number.isFinite(m.max_tokens) ? m.max_tokens : 0,
       images: input.includes("image"),
+      audio: input.includes("audio"),
+      video: input.includes("video"),
       reasoning: m.reasoning === true || m.owned_by === "anthropic" && surfaces.includes("messages"),
       cost: priceOf(m.pricing),
     })
@@ -146,10 +170,13 @@ export function normalizeFallback() {
   return FALLBACK.map((m) => ({
     ...m,
     npm: npmOf(m.surfaces),
+    unsupported: "",
+    audio: false,
+    video: false,
     images: true,
     reasoning: m.surfaces.includes("messages"),
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-  })).filter((m) => m.npm)
+  }))
 }
 
 // configModel is one entry in the shape magpie's config hook wants.
@@ -159,12 +186,15 @@ export function normalizeFallback() {
 // (`host: m.provider?.npm ?? cfg.npm ?? …`), so the protocol is a property
 // of the model rather than of the provider.
 export function configModel(m) {
+  const modalities = ["text", ...(m.images ? ["image"] : []), ...(m.audio ? ["audio"] : []), ...(m.video ? ["video"] : [])]
   return {
-    name: m.name,
+    // a model magpie cannot reach says so in its own name rather than
+    // being offered as one that works
+    name: m.unsupported ? `${m.name} — ${m.unsupported} only` : m.name,
     limit: { context: m.context ?? 0, output: m.output ?? 0 },
-    ...(m.images ? { attachment: true, modalities: { input: ["text", "image"], output: ["text"] } } : {}),
+    ...(m.images || m.audio || m.video ? { attachment: true, modalities: { input: modalities, output: ["text"] } } : {}),
     ...(m.reasoning ? { reasoning: true } : {}),
-    tool_call: true,
+    tool_call: !m.unsupported,
     provider: { npm: m.npm, api: BASE },
   }
 }
@@ -175,11 +205,18 @@ export function configModel(m) {
 // it, so every field magpie draws from has to be carried here or it is
 // lost — `limit.context` is the one that shows as the context badge.
 export function runtimeModel(m) {
+  const input = { text: true, image: !!m.images, audio: !!m.audio, video: !!m.video, pdf: false }
   return {
     id: m.id,
     providerID: "lovable",
-    name: m.name,
-    api: { id: m.id, url: BASE, npm: m.npm },
+    // A model magpie cannot reach says so in its own name and carries no
+    // tool calling, which is what stops an agent picking it for work.
+    //
+    // It is NOT marked `deprecated`: the host filters those out of the
+    // provider list entirely (`host:1838`), so marking one hides it — the
+    // opposite of what is wanted. The name is the mark that survives.
+    name: m.unsupported ? `${m.name} — ${m.unsupported} only` : m.name,
+    api: { id: m.id, url: BASE, npm: m.npm ?? OPENAI },
     status: "active",
     headers: {},
     options: {},
@@ -187,10 +224,10 @@ export function runtimeModel(m) {
     limit: { context: m.context ?? 0, output: m.output ?? 0 },
     capabilities: {
       temperature: true,
-      toolcall: true,
+      toolcall: !m.unsupported,
       reasoning: !!m.reasoning,
       attachment: !!m.images,
-      input: { text: true, image: !!m.images, audio: false, video: false, pdf: false },
+      input,
       output: { text: true, image: false, audio: false, video: false, pdf: false },
     },
   }

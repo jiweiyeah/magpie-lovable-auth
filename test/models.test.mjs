@@ -91,17 +91,35 @@ test("a model is reached on the first surface magpie can carry", () => {
   assert.equal(npmOf(undefined), "")
 })
 
-test("the catalog keeps only what magpie can speak", () => {
+test("the catalog keeps every model, marking the ones magpie cannot reach", () => {
   const models = parseListing(LISTING)
   const ids = models.map((m) => m.id)
   assert.deepEqual(ids, [
     "anthropic/claude-sonnet-5",
     "openai/gpt-5.5",
     "openai/gpt-5.4-pro",
+    "google/veo-3.1",
+    "openai/text-embedding-3-small",
   ])
-  assert.ok(!ids.includes("google/veo-3.1"), "videos are not a chat surface")
-  assert.ok(!ids.includes("openai/text-embedding-3-small"), "embeddings are not one either")
   assert.ok(!ids.includes("anthropic/claude-old"), "a deprecated model is left out")
+
+  // a reachable model carries no mark
+  assert.equal(models.find((m) => m.id === "anthropic/claude-sonnet-5").unsupported, "")
+
+  // an unreachable one names its surface instead of disappearing
+  assert.equal(models.find((m) => m.id === "google/veo-3.1").unsupported, "video")
+  assert.equal(models.find((m) => m.id === "openai/text-embedding-3-small").unsupported, "embeddings")
+})
+
+test("an unreachable model is listed and marked in its name, not hidden", () => {
+  const veo = parseListing(LISTING).find((m) => m.id === "google/veo-3.1")
+  const r = runtimeModel(veo)
+  // `deprecated` is filtered out of the provider list by the host, so
+  // marking one that way would hide it rather than label it.
+  assert.equal(r.status, "active")
+  assert.match(r.name, /video only/, "the name is the mark that survives")
+  assert.equal(r.capabilities.toolcall, false, "and no tool calling, so nothing picks it for work")
+  assert.match(configModel(veo).name, /video only/)
 })
 
 test("the protocol is carried per model, not per provider", () => {
