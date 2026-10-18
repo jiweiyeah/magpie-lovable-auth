@@ -1,4 +1,6 @@
 node_modules/
 .lovable-book.json
+.lovable-pool.txt
+.lovable-pool.txt.book.json
 *.log
 .DS_Store

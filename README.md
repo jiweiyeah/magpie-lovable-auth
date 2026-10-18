@@ -145,6 +145,9 @@ magpie quota lovable            # every account, one row each
 magpie names them `lovable`, `lovable#abc123`, … and rotates between them.
 A 402 retires one account without touching the others.
 
+Past a few dozen keys, use the pool instead — see
+[A pool larger than the account list](#a-pool-larger-than-the-account-list).
+
 **A key's allowance is the account's, not the key's.** Two keys minted from
 one Lovable account share one credit balance and one rate bucket — a second
 key from the same account adds no capacity. A pool only grows by adding
@@ -190,6 +193,68 @@ two keys apart, not enough to use one.
 
 Reopen magpie afterwards so the new accounts are read.
 
+## A pool larger than the account list
+
+One key per account stops working somewhere in the hundreds, and it is not
+magpie's limit — it is the shape of the account list:
+
+| accounts | `magpie accounts` | a gateway request |
+|---|---|---|
+| 21 | instant | 2 s |
+| 71 | fine | fine |
+| 271 | slow | `too many plugin calls are in flight` |
+| 1771 | 16 s | **no answer at all** (60 s timeout) |
+
+Every account is a row, and the host calls the plugin once per row to draw
+it. A thousand rows is a thousand loader calls before the page lands. There
+is no hard cap; there is a cliff.
+
+So keys are kept in a **pool** and magpie is given **slots**. A slot is an
+account with no key of its own:
+
+```json
+{ "type": "api", "key": "", "pool": true }
+```
+
+The loader answers a slot with a `fetch` that takes one key from the pool
+per request — round-robin, skipping keys that are resting or retired — and
+writes the real `authorization` header itself. magpie sees `slots` rows
+however many keys the pool holds; the UI stays eight rows for seventeen
+hundred keys.
+
+```bash
+node bin/pool.mjs load keys.txt              # one key per line
+node bin/pool.mjs load lovable_accounts.jsonl --ledger   # or a JSONL ledger
+node bin/pool.mjs load keys.txt --dry-run    # say what it would add
+node bin/pool.mjs status                     # keys, live, resting, retired
+node bin/pool.mjs slots 8                    # eight slots, the rest of the keys behind them
+node bin/pool.mjs slots 0                    # remove every slot
+```
+
+The importer is incremental by construction: it compares against what the
+pool already holds, so running it against a growing ledger adds only the new
+keys. `--ledger` skips records marked `success: false`, `key_dead: true`, or
+carrying no `api_key`.
+
+Two things a slot changes about failure:
+
+**A 402 retires the key, not the slot.** One dead key behind a slot must not
+take the whole pool out of rotation, so the slot answers 502 and the next
+request takes another key. Only the single-key path hands magpie
+`signIn: "expired"`.
+
+**An empty pool answers without reaching the vendor.** "No key can be
+tried: 1714 keys, 1714 out of credits" costs nothing and is the truth;
+spending a request to be told 402 again is not.
+
+A 429 rests the key for a minute; three consecutive 5xx/network failures
+rest it for thirty seconds. Both are in memory — a restart forgets the
+rests, which is fine (they are short) and deliberate: the retirements are
+the ones that must survive, and they are in the book beside the key file
+(`.lovable-pool.txt.book.json`), never in it.
+
+The pool file and its book hold real keys and are gitignored.
+
 ## Files
 
 ```
@@ -198,7 +263,9 @@ src/headers.mjs   the beta filter and the body scrub
 src/models.mjs    the catalog: reading it, and the fallback
 src/keys.mjs      the book: what each key has done, and what that means
 src/import.mjs    a batch of keys: parsing, dedupe, the length check
+src/pool.mjs      the pool: round-robin, rests, retirements
 bin/import-keys.mjs  the batch importer, under the host's own lock
+bin/pool.mjs      load keys, make slots
 test/             the edges against fixtures, and the gateway itself
 ```
 

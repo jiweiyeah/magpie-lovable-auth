@@ -13,11 +13,13 @@
     "assets"
   ],
   "bin": {
-    "magpie-lovable-import": "bin/import-keys.mjs"
+    "magpie-lovable-import": "bin/import-keys.mjs",
+    "magpie-lovable-pool": "bin/pool.mjs"
   },
   "scripts": {
     "test": "node --test 'test/*.test.mjs'",
-    "import": "node bin/import-keys.mjs"
+    "import": "node bin/import-keys.mjs",
+    "pool": "node bin/pool.mjs"
   },
   "keywords": [
     "magpie",
