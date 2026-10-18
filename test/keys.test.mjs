@@ -71,14 +71,18 @@ test("a corrupt book is not a crash", () => {
   assert.equal(b.entries["k4"].ok, 1)
 })
 
-test("describe says a retired key is gone, in words", () => {
+test("describe says a retired key is gone, and that signing in again will not help", () => {
   const { book } = tempBook()
   book.record("k5", 402)
   book.retire("k5", "out of credits")
   const d = describe("k5", book.entries["k5"])
   assert.equal(d.signIn, "expired", "magpie reads this to take the account out")
-  assert.match(d.plan, /retired/)
+  assert.match(d.plan, /no credits left/)
   assert.match(d.error, /402 payment_required/)
+  // magpie's own wording for a lapsed sign-in is "sign in again", which for
+  // an account out of credits is the one instruction that cannot work
+  assert.match(d.error, /Signing in again will not help/)
+  assert.match(d.error, /shares the same balance/)
 })
 
 test("describe names a working key by what it has done", () => {

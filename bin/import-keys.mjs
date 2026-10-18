@@ -18,7 +18,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { classify, mask, parseKeys, readSource } from "../src/import.mjs"
+import { classify, ledgerKeys, mask, parseKeys, readSource } from "../src/import.mjs"
 
 const PROVIDER = "lovable"
 const AUTH_PATH = process.env.MAGPIE_AUTH_PATH ?? path.join(os.homedir(), ".config", "magpie", "plugin-auth.json")
@@ -89,17 +89,35 @@ function nameFor(all, provider) {
 }
 
 function main(argv) {
-  const args = argv.slice(2).filter((a) => a !== "--dry-run")
+  const args = argv.slice(2).filter((a) => !a.startsWith("--"))
   const dryRun = argv.includes("--dry-run")
+  // --ledger reads a registration ledger (one JSON object per line) rather
+  // than a plain list: the difference is that a row can name a key the
+  // vendor has since refused, and that key is skipped here rather than
+  // added and discovered on the first turn handed to it.
+  const ledger = argv.includes("--ledger")
+  // --limit N adds at most N of the fresh keys, so a thousand-key ledger
+  // can be tried on a handful before the pool carries all of them. The
+  // count is of keys that would be added, not of rows read.
+  const limitArg = argv.find((a) => a.startsWith("--limit=")) ?? ""
+  const limit = limitArg ? Number(limitArg.slice("--limit=".length)) : 0
   const source = args[0]
   if (!source) {
-    console.error("usage: magpie-lovable-import <file|list|-> [--dry-run]")
+    console.error("usage: magpie-lovable-import <file|list|-> [--dry-run] [--ledger] [--limit=N]")
     return 2
   }
 
   const text = readSource(source)
-  const candidates = parseKeys(text)
-  if (!candidates.length) {
+  let candidates
+  let ledgerSkipped = []
+  if (ledger) {
+    const read = ledgerKeys(text)
+    candidates = read.keys
+    ledgerSkipped = read.skipped
+  } else {
+    candidates = parseKeys(text)
+  }
+  if (!candidates.length && !ledgerSkipped.length) {
     console.error("no keys found in that source")
     return 1
   }
@@ -109,13 +127,16 @@ function main(argv) {
   // magpie routes to twice.
   const all = readAuth()
   const existing = new Set(Object.values(all).map((a) => a?.key).filter((k) => typeof k === "string"))
-  const { fresh, duplicates, invalid } = classify(candidates, existing)
+  const classified = classify(candidates, existing)
+  const { duplicates, invalid } = classified
+  const fresh = Number.isFinite(limit) && limit > 0 ? classified.fresh.slice(0, limit) : classified.fresh
 
+  for (const s of ledgerSkipped) console.log(`skip   ${mask(s.key)}  ${s.reason}`)
   for (const d of duplicates) console.log(`skip   ${mask(d.key)}  ${d.reason}`)
   for (const v of invalid) console.log(`refuse ${mask(v.key)}  ${v.reason}`)
 
   if (!fresh.length) {
-    console.log(`\n0 added · ${duplicates.length} duplicate · ${invalid.length} invalid`)
+    console.log(`\n0 added · ${duplicates.length} duplicate · ${invalid.length} invalid · ${ledgerSkipped.length} skipped`)
     return invalid.length ? 1 : 0
   }
   if (dryRun) {
@@ -145,7 +166,7 @@ function main(argv) {
     if (added) {
       writeDurable(AUTH_PATH, JSON.stringify(current, null, 2) + "\n")
     }
-    console.log(`\n${added} added · ${duplicates.length} duplicate · ${invalid.length} invalid`)
+    console.log(`\n${added} added · ${duplicates.length} duplicate · ${invalid.length} invalid · ${ledgerSkipped.length} skipped`)
   } finally {
     unlock()
   }

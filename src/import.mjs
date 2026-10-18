@@ -66,6 +66,57 @@ export function parseKeys(text) {
   return out
 }
 
+// ledgerKeys reads a registration ledger — one JSON object per line — and
+// returns the keys in it worth adding.
+//
+// The ledger this is written for is a registration pipeline's: a row per
+// account with `api_key`, `success`, `key_dead` and a few dozen other
+// fields. Only three of them matter here, and each excludes a row for its
+// own reason:
+//
+//   success: false    the registration did not finish, so there is no key
+//   key_dead: true    the vendor has since refused it
+//   api_key empty     a row that names no key
+//
+// A key that is `key_dead` is skipped rather than added and discovered on
+// the first turn handed to it. A row that says nothing about either field
+// is taken as usable: an older ledger does not have them.
+export function ledgerKeys(text) {
+  if (typeof text !== "string" || !text) return { keys: [], skipped: [] }
+  const keys = []
+  const skipped = []
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let row
+    try {
+      row = JSON.parse(trimmed)
+    } catch {
+      skipped.push({ key: "", reason: "a line that is not JSON" })
+      continue
+    }
+    if (!row || typeof row !== "object") {
+      skipped.push({ key: "", reason: "a line that is not an object" })
+      continue
+    }
+    const key = typeof row.api_key === "string" ? row.api_key.trim() : ""
+    if (!key) {
+      skipped.push({ key: "", reason: "a row with no api_key" })
+      continue
+    }
+    if (row.success === false) {
+      skipped.push({ key, reason: "the registration did not succeed" })
+      continue
+    }
+    if (row.key_dead === true) {
+      skipped.push({ key, reason: "marked key_dead" })
+      continue
+    }
+    keys.push(key)
+  }
+  return { keys, skipped }
+}
+
 // classify splits a batch into what can be added and what cannot, with a
 // reason for each refusal.
 //

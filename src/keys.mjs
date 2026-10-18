@@ -149,9 +149,17 @@ export function idOf(key) {
 export function describe(id, e) {
   if (!e) return { plan: "unused", signIn: "kept" }
   if (e.retiredAt) {
+    // The row says what happened and what to do about it. magpie's own
+    // wording for a lapsed sign-in is "sign in again", and for an account
+    // out of credits that is the one instruction that cannot work — a new
+    // key from the same account shares the same balance. So the reason is
+    // said in words, in the two fields the row and `magpie quota` show.
     return {
-      plan: `retired · ${e.retiredReason}`,
-      error: `key ${id} answered 402 payment_required and Lovable does not lift it — this account has no credits left`,
+      plan: "no credits left · remove this key",
+      error:
+        `Lovable answered 402 payment_required for this account and does not lift it. ` +
+        `Signing in again will not help: a new key from the same account shares the same balance. ` +
+        `Remove this key (magpie plugin logout lovable) or add one from another account.`,
       signIn: "expired",
     }
   }
