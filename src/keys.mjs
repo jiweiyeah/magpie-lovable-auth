@@ -133,7 +133,19 @@ export function idOf(key) {
   return (h >>> 0).toString(16).padStart(8, "0")
 }
 
-// describe is one key as `magpie quota lovable` shows it.
+// describe is one key as magpie's account row and `magpie quota lovable`
+// show it.
+//
+// `plan` is the one line the row shows beside the account's name, so it
+// carries the reading that matters at a glance. The allowance itself
+// cannot be read — Lovable publishes no endpoint for it — and a row that
+// says nothing there renders "no allowance data", which reads as this
+// plugin failing rather than as the vendor not saying. So the row says
+// what it does know instead: how the key has answered, and when it last
+// did.
+//
+// `windows` stays empty on purpose: a window without a `resetsAt` never
+// lifts once it fills, so inventing one would park a working account.
 export function describe(id, e) {
   if (!e) return { plan: "unused", signIn: "kept" }
   if (e.retiredAt) {
@@ -146,15 +158,23 @@ export function describe(id, e) {
   const parts = [`${e.ok}/${e.requests} ok`]
   if (e.rateLimited) parts.push(`${e.rateLimited} rate-limited`)
   if (e.failures) parts.push(`${e.failures} failed`)
-  const last = e.lastOkAt ? new Date(e.lastOkAt).toISOString().replace("T", " ").slice(0, 19) : "never"
+  const last = e.lastOkAt ? new Date(e.lastOkAt) : null
+  // the last success goes in the plan line, not in `until`: magpie reads
+  // `until` as the plan's renewal date and would say "renews <that day>",
+  // which is a claim about the account that was never read.
+  if (last) {
+    const hhmm = `${String(last.getHours()).padStart(2, "0")}:${String(last.getMinutes()).padStart(2, "0")}`
+    parts.push(`last ok ${hhmm}`)
+  }
   return {
     plan: parts.join(" · "),
     user: `key ${id}`,
-    error: e.lastOkAt ? undefined : "no successful request yet",
+    // an account that has never answered is not an error — it may simply
+    // not have been used yet — but it is worth saying, because it is the
+    // one state a dead key and an idle one look alike in
+    error: last ? undefined : "no successful request yet",
     windows: [],
     signIn: "kept",
-    // magpie shows this row's own words; the last success is the one fact
-    // that separates a quiet key from a dead one
-    renew: last === "never" ? "off" : "auto",
+    renew: last ? "auto" : "off",
   }
 }
