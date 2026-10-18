@@ -115,7 +115,10 @@ function cmdStatus() {
   const pool = new Pool(POOL_FILE)
   const s = pool.summary()
   console.log(`pool      ${POOL_FILE}`)
-  console.log(`keys      ${s.total} total · ${s.live} live · ${s.resting} resting · ${s.retired} out of credits`)
+  console.log(`keys      ${s.total} total · ${s.live} live · ${s.resting} resting · ${s.retired} retired`)
+  for (const [why, n] of Object.entries(pool.reasons()).sort((a, b) => b[1] - a[1])) {
+    console.log(`          ${n} ${why}`)
+  }
 
   const all = readAuth()
   const slots = Object.keys(all).filter((k) => k === PROVIDER || k.startsWith(`${PROVIDER}#`)).filter((k) => all[k]?.pool === true)

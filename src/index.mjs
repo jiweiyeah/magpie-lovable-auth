@@ -108,58 +108,82 @@ function keyIdOf(auth) {
 //     vendor. Saying "every key is out of credits" costs nothing and is
 //     the truth; spending a request to be told 402 again is not.
 //
-//   * a 402 retires THAT key and the request is answered 502, not
-//     `signIn: expired`. The account magpie routes to is the slot, and
-//     the slot is not out of credits — one key in its pool is. Retiring
-//     the slot would take a working pool out of rotation over one dead
-//     key.
+//   * a 402 retires THAT key, not the slot. The account magpie routes to
+//     is the slot, and the slot is not out of credits — one key in its
+//     pool is. `signIn: expired` here would take a working pool out of
+//     rotation over one dead key.
+//
+// A key that turns out to be dead mid-request (401 invalid, 402 out of
+// credits) is retired by `pool.note` and the SAME request is retried on the
+// next key. Retrying is safe because neither status means the vendor read
+// the turn: nothing was generated, so nothing is spent twice. With a
+// thousand keys behind a slot, a dead key should cost a round trip, not a
+// turn.
+const MAX_KEY_TRIES = 3
+
+// describeReasons turns `{ "out of credits": 2, invalid: 1 }` into
+// ` (2 out of credits, 1 invalid)` for the account row.
+function describeReasons(why) {
+  const parts = Object.entries(why)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${n} ${k}`)
+  return parts.length ? ` (${parts.join(", ")})` : ""
+}
+
 function poolLoader(pool) {
   return {
     baseURL: `${BASE}/v1`,
     apiKey: "lovable", // the fetch sets the real credential itself
     async fetch(init_, init = {}) {
       const url = typeof init_ === "string" ? init_ : init_ instanceof URL ? init_.href : init_.url
-      const key = pool.take()
-      if (!key) {
-        const s = pool.summary()
-        throw new Error(
-          `lovable pool has no key to try: ${s.total} keys, ${s.retired} out of credits, ${s.resting} resting`,
-        )
-      }
-
-      const out = new Headers(init.headers ?? {})
-      out.set("authorization", `Bearer ${key}`)
-      out.delete("x-api-key")
-
-      const betas = filterBetas(out.get("anthropic-beta"))
-      if (betas) out.set("anthropic-beta", betas)
-      else out.delete("anthropic-beta")
-
       const scrubbed = scrubBody(init.body)
 
-      let res
-      try {
-        res = await fetch(url, { ...init, headers: out, body: scrubbed.body })
-      } catch (e) {
-        pool.note(key, 0)
-        throw e
+      for (let attempt = 0; attempt < MAX_KEY_TRIES; attempt++) {
+        const key = pool.take()
+        if (!key) {
+          const s = pool.summary()
+          throw new Error(
+            `lovable pool has no key to try: ${s.total} keys, ${s.retired} retired, ${s.resting} resting`,
+          )
+        }
+
+        const out = new Headers(init.headers ?? {})
+        out.set("authorization", `Bearer ${key}`)
+        out.delete("x-api-key")
+
+        const betas = filterBetas(out.get("anthropic-beta"))
+        if (betas) out.set("anthropic-beta", betas)
+        else out.delete("anthropic-beta")
+
+        let res
+        try {
+          res = await fetch(url, { ...init, headers: out, body: scrubbed.body })
+        } catch (e) {
+          pool.note(key, 0)
+          throw e
+        }
+
+        pool.note(key, res.status)
+
+        // 401 and 402 are the key's, and `note` retires it. The slot keeps
+        // its place in rotation — handing magpie `signIn: expired` here
+        // would take the whole slot, and every key behind it, out over one
+        // dead key. Release the reply and try the next key instead.
+        if (res.status === 401 || res.status === 402) {
+          try {
+            await res.body?.cancel()
+          } catch {}
+          continue
+        }
+
+        return res
       }
 
-      pool.note(key, res.status)
-
-      // A 402 is that key's account, and it is retired by `note`. The
-      // slot keeps its place in rotation: the next request takes another
-      // key. Handing magpie `signIn: expired` here would take the whole
-      // slot — and every key behind it — out over one dead key.
-      if (res.status === 402) {
-        const s = pool.summary()
-        throw new Error(
-          `lovable key ${idOf(key)} is out of credits; retired. ` +
-            `pool now: ${s.live} live of ${s.total} (${s.retired} retired, ${s.resting} resting)`,
-        )
-      }
-
-      return res
+      const s = pool.summary()
+      throw new Error(
+        `lovable pool: ${MAX_KEY_TRIES} keys in a row were dead; retired them. ` +
+          `pool now: ${s.live} live of ${s.total} (${s.retired} retired, ${s.resting} resting)`,
+      )
     },
   }
 }
@@ -275,7 +299,7 @@ const LovableAuth = async (_input, options = {}) => {
         // A slot reports the pool, not itself: what it has is keys, and
         // how many of them can still be tried.
         if (auth.pool === true) {
-          pool.reload()
+          pool.refresh()
           const s = pool.summary()
           if (!s.total) {
             return {
@@ -286,14 +310,15 @@ const LovableAuth = async (_input, options = {}) => {
             }
           }
           const parts = [`${s.live} live of ${s.total} keys`]
-          if (s.retired) parts.push(`${s.retired} out of credits`)
+          const why = pool.reasons()
+          if (s.retired) parts.push(`${s.retired} retired${describeReasons(why)}`)
           if (s.resting) parts.push(`${s.resting} resting`)
           return {
             plan: parts.join(" · "),
             user: "key pool",
             // a pool with every key retired is done; one with keys resting
             // is not, and says so by leaving this unset
-            ...(s.live ? {} : { error: `no key can be tried: ${s.total} keys, ${s.retired} out of credits` }),
+            ...(s.live ? {} : { error: `no key can be tried: ${s.total} keys${describeReasons(why)}` }),
             windows: [],
             signIn: "kept",
           }

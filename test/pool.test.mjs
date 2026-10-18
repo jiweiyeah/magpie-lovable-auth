@@ -119,6 +119,37 @@ test("write drops duplicates and invalid keys", () => {
   assert.deepEqual(new Pool(file).keys, [A, B])
 })
 
+test("a 401 is a key Lovable does not hold, and retires it like a 402", () => {
+  const { pool } = tempPool([A, B])
+  pool.note(A, 401)
+  assert.equal(pool.take(), B, "the dead key is never handed out again")
+  assert.equal(pool.reasons()["invalid"], 1)
+})
+
+test("reasons counts the retirements by why", () => {
+  const { pool } = tempPool([A, B, C])
+  pool.note(A, 402)
+  pool.note(B, 401)
+  assert.deepEqual(pool.reasons(), { "out of credits": 1, invalid: 1 })
+})
+
+test("take picks up a key appended to the file, without a restart", () => {
+  const { file, pool } = tempPool([A])
+  const t0 = 1_000_000
+  assert.equal(pool.take(t0), A)
+
+  fs.appendFileSync(file, `${B}\n`)
+  // set the mtime explicitly: an append in the same millisecond the pool
+  // read would otherwise look like no change at all
+  const later = new Date(Date.now() + 5000)
+  fs.utimesSync(file, later, later)
+
+  // the stat is throttled, so the check lands on a later take
+  const seen = new Set()
+  for (let i = 0; i < 4; i++) seen.add(pool.take(t0 + 3000 * (i + 1)))
+  assert.deepEqual([...seen].sort(), [A, B].sort())
+})
+
 test("a retired key stays retired across a restart", () => {
   const { file, pool } = tempPool([A, B])
   pool.note(A, 402)

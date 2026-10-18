@@ -32,6 +32,11 @@ const RATE_LIMIT_REST_MS = 60 * 1000
 const FAILURE_REST_MS = 30 * 1000
 const FAILURES_BEFORE_REST = 3
 
+// How often `take` looks at the key file's mtime. A key added with the
+// pool CLI must be in rotation without restarting magpie — the plugin host
+// is long-lived — but a stat per request is more often than a file changes.
+const RELOAD_CHECK_MS = 2 * 1000
+
 export class Pool {
   constructor(file, { restMs = RATE_LIMIT_REST_MS } = {}) {
     this.file = file
@@ -44,7 +49,15 @@ export class Pool {
     // `lovable-keys-book.json`. Deriving it by stripping `.json` would
     // leave a `.txt` pool writing its book over its own key file.
     this.book = new Book(`${file}.book.json`)
+    this.seenAt = 0          // when the file's mtime was last looked at
     this.load()
+    // what was just read is not stale: without this the first `take` after
+    // start would re-read the file for nothing
+    try {
+      this.seenMtimeMs = fs.statSync(file).mtimeMs
+    } catch {
+      this.seenMtimeMs = 0
+    }
   }
 
   // load reads the key file: one key per line, blank lines and `#` skipped.
@@ -80,6 +93,25 @@ export class Pool {
     return this.keys.length - was
   }
 
+  // refresh re-reads the key file when its mtime moved. It is what makes a
+  // key added by the CLI usable on the next request rather than the next
+  // restart: the plugin host is long-lived and nothing else tells it the
+  // file changed. Cheap enough to call from `take` — a stat every
+  // RELOAD_CHECK_MS, not per request.
+  refresh(now = Date.now()) {
+    if (now - this.seenAt < RELOAD_CHECK_MS) return 0
+    this.seenAt = now
+    let mtimeMs = 0
+    try {
+      mtimeMs = fs.statSync(this.file).mtimeMs
+    } catch {
+      return 0
+    }
+    if (mtimeMs === this.seenMtimeMs) return 0
+    this.seenMtimeMs = mtimeMs
+    return this.reload()
+  }
+
   size() {
     return this.keys.length
   }
@@ -103,6 +135,9 @@ export class Pool {
   // fail: the caller says what that means (every key out of credits, or
   // every key resting) rather than spending a request to find out.
   take(now = Date.now()) {
+    // a key the CLI added a moment ago is in rotation now, not after a
+    // restart of a host that runs for days
+    this.refresh(now)
     const live = this.live(now)
     if (!live.length) return null
     // The cursor counts over the whole pool, not over what is live now: a
@@ -128,6 +163,13 @@ export class Pool {
       // the account's, not the key's, and it does not lift
       this.book.retire(id, "out of credits", now)
       this.book.flush()
+    } else if (status === 401) {
+      // "Invalid API key. The key could not be decrypted." — a truncated
+      // copy or a key Lovable no longer holds. Waiting does not fix it and
+      // trying it again only spends a request, so it goes the way a 402
+      // does. (Measured: a made-up key of the right shape answers 401.)
+      this.book.retire(id, "invalid", now)
+      this.book.flush()
     } else if (status === 429) {
       this.resting.set(id, now + this.restMs)
     } else if (status >= 500 || status === 0) {
@@ -146,6 +188,21 @@ export class Pool {
     const live = this.live(now).length
     const retired = this.keys.filter((k) => this.book.retired(idOf(k))).length
     return { total, live, resting: total - live - retired, retired }
+  }
+
+  // reasons counts the retirements by why. The row shows both: a key out of
+  // credits and a key Lovable no longer holds both stop working, and which
+  // one it was is the difference between "the pool is being spent" and
+  // "something is feeding the pool junk".
+  reasons() {
+    const out = {}
+    for (const k of this.keys) {
+      const e = this.book.entries[idOf(k)]
+      if (!e?.retiredAt) continue
+      const why = e.retiredReason || "retired"
+      out[why] = (out[why] ?? 0) + 1
+    }
+    return out
   }
 
   // sync rewrites the key file from a list, keeping its order and dropping

@@ -236,22 +236,44 @@ pool already holds, so running it against a growing ledger adds only the new
 keys. `--ledger` skips records marked `success: false`, `key_dead: true`, or
 carrying no `api_key`.
 
-Two things a slot changes about failure:
+### What happens when a key dies
 
-**A 402 retires the key, not the slot.** One dead key behind a slot must not
-take the whole pool out of rotation, so the slot answers 502 and the next
-request takes another key. Only the single-key path hands magpie
+| status | what it is | the key |
+|---|---|---|
+| 402 `payment_required` | the account is out of credits; does not lift | retired for good |
+| 401 `unauthorized` | "The key could not be decrypted" — truncated or revoked | retired for good |
+| 429 `rate_limited` | a rate, not an allowance | rests 60 s |
+| 5xx / network | not about the account | rests 30 s after three in a row |
+
+A retired key is never handed out again, and the retirement survives a
+restart (it is in the book). Neither 401 nor 402 means the vendor read the
+turn — nothing was generated, nothing is spent twice — so the **same
+request is retried on the next key**, up to three keys. A dead key costs a
+round trip, not a turn. Measured: a pool whose first key was a made-up one
+answered 200 in 3.3 s, having retired it and moved on.
+
+The slot itself is never retired: one dead key behind a slot must not take
+the pool out of rotation. Only the single-key path hands magpie
 `signIn: "expired"`.
 
 **An empty pool answers without reaching the vendor.** "No key can be
-tried: 1714 keys, 1714 out of credits" costs nothing and is the truth;
-spending a request to be told 402 again is not.
+tried: 1714 keys, 1714 retired" costs nothing and is the truth; spending a
+request to be told 402 again is not.
 
-A 429 rests the key for a minute; three consecutive 5xx/network failures
-rest it for thirty seconds. Both are in memory — a restart forgets the
-rests, which is fine (they are short) and deliberate: the retirements are
-the ones that must survive, and they are in the book beside the key file
+Rests are in memory — a restart forgets them, which is fine (they are
+short). Retirements go in the book beside the key file
 (`.lovable-pool.txt.book.json`), never in it.
+
+### Adding keys while magpie is running
+
+The plugin host is long-lived (days), so the pool does not wait for a
+restart: `take` stats the key file every couple of seconds and re-reads it
+when the mtime moved. A key appended by `pool load` is in rotation on the
+next request. Measured: appending a key and asking `magpie quota` two
+seconds later showed the new count without touching the host.
+
+Removing a key from the file also takes effect — the file is the pool's
+whole state, so a key that is not in it is not in the pool.
 
 The pool file and its book hold real keys and are gitignored.
 
