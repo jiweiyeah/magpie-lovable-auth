@@ -102,13 +102,24 @@ the key is a book that leaks it.
 
 ## What each key has done
 
-`auth.usage` reports the book, so `magpie quota lovable` and the app's
-account row show real numbers instead of a "not configured" placeholder:
+`auth.usage` reports the book, so the account row and `magpie quota lovable`
+show what this plugin actually read:
 
 ```
-lovable · 42/45 ok · 3 rate-limited
-  key 3f2a91c4
+lovable · 9/13 ok · 4 failed · last ok 00:17 · API key …Gw==
 ```
+
+That row is the book, not an allowance. There is no allowance to read, and
+`windows` stays empty on purpose — a window without a `resetsAt` never lifts
+once it fills, so inventing one would park a working account.
+
+The last success goes in the plan line, **not** in `until`: magpie reads
+`until` as the plan's renewal date and renders "renews <day>", which is a
+claim about the account nothing read.
+
+The account's own name is magpie's doing — an API key has no account id, so
+the host names it `API key …` plus the key's last four characters
+(`host:951`).
 
 A retired key says so in words, because magpie renders every lapsed sign-in
 as "sign in again" and for an account with no credits that is the one
